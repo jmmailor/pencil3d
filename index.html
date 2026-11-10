@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pencil3D">
+<meta name="theme-color" content="#000000">
+<title>Pencil3D</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="gl"></canvas>
+  <canvas id="dbg"></canvas>
+</div>
+
+<!-- top status -->
+<div id="top">
+  <div class="pills">
+    <span id="pillBoard" class="pill bad" title="Desk sheet">Sheet</span>
+    <span id="pillPen" class="pill bad" title="Pencil">Pencil</span>
+    <span id="pillFps" class="pill dim">– fps</span>
+  </div>
+  <div id="modeBanner" class="hidden"></div>
+</div>
+
+<!-- readouts -->
+<div id="hud"><div id="hudTip">Tip —</div><div id="hudInfo"></div></div>
+
+<!-- bottom bar -->
+<div id="bar">
+  <div class="group">
+    <button id="bUndo" class="icon" aria-label="Undo">↶</button>
+    <button id="bRedo" class="icon" aria-label="Redo">↷</button>
+  </div>
+  <button id="bDraw" aria-label="Hold to draw"><span>Hold to draw</span></button>
+  <div class="group">
+    <button id="bSelect" class="icon" aria-label="Select tool">⬚</button>
+    <button id="bMenu" class="icon" aria-label="Menu">☰</button>
+  </div>
+</div>
+<div id="selBar" class="hidden">
+  <button data-act="del">Delete</button>
+  <button data-act="dup">Duplicate</button>
+  <button data-act="axis" id="bAxis">Move: XY</button>
+  <button data-act="style">Apply pen style</button>
+  <button data-act="layer">To active layer</button>
+  <button data-act="none">Done</button>
+</div>
+
+<!-- sheet with tabs -->
+<div id="sheet" class="hidden">
+  <div class="tabs">
+    <button data-tab="pen" class="on">Pen</button>
+    <button data-tab="tools">Tools</button>
+    <button data-tab="layers">Layers</button>
+    <button data-tab="export">Export</button>
+    <button data-tab="files">Files</button>
+    <button data-tab="setup">Setup</button>
+    <button id="bClose" class="close" aria-label="Close">✕</button>
+  </div>
+
+  <section data-panel="pen">
+    <label>Colour</label>
+    <div id="swatches" class="swatches"></div>
+    <label>Thickness <output id="oWidth"></output></label>
+    <input id="iWidth" type="range" min="0.05" max="1.5" step="0.05">
+    <label>Smoothing <output id="oSmooth"></output></label>
+    <input id="iSmooth" type="range" min="0" max="1" step="0.05">
+    <label>Draw on</label>
+    <div class="seg" id="segDraw">
+      <button data-v="air">In the air</button>
+      <button data-v="auto">Air + snap to desk</button>
+      <button data-v="surface">Desk surface only</button>
+    </div>
+    <label class="row"><input type="checkbox" id="cStraight"> Auto-straighten near-straight strokes</label>
+  </section>
+
+  <section data-panel="tools" hidden>
+    <label class="row"><input type="checkbox" id="cGrid"> Show 1 cm grid on the desk</label>
+    <label class="row"><input type="checkbox" id="cMirror"> Mirror drawing (plane through origin, along Y–Z)</label>
+    <label class="row"><input type="checkbox" id="cSnapEnds"> Snap stroke ends to nearby stroke ends</label>
+    <label class="row"><input type="checkbox" id="cGridSnap"> Snap stroke ends to 0.5 cm grid</label>
+    <label class="row"><input type="checkbox" id="cLock"> Lock camera (phone is fixed — keeps the view even if the sheet is covered)</label>
+    <div class="btns">
+      <button id="bOrigin">Set origin (tap)</button>
+      <button id="bOriginClear">Clear origin</button>
+      <button id="bClear" class="danger">Clear all strokes</button>
+    </div>
+    <p class="hint">Origin is used for export. Tap a stroke point or a spot on the desk.</p>
+  </section>
+
+  <section data-panel="layers" hidden>
+    <div id="layerList"></div>
+    <div class="btns"><button id="bAddLayer">Add layer</button></div>
+  </section>
+
+  <section data-panel="export" hidden>
+    <label>Formats</label>
+    <div class="checks">
+      <label class="row"><input type="checkbox" data-fmt="3dm"> Rhino .3dm</label>
+      <label class="row"><input type="checkbox" data-fmt="obj"> .obj (+ .mtl)</label>
+      <label class="row"><input type="checkbox" data-fmt="dxf"> .dxf (R12)</label>
+      <label class="row"><input type="checkbox" data-fmt="fbx"> .fbx (ASCII)</label>
+    </div>
+    <label>Curves as</label>
+    <div class="seg" id="segGeom">
+      <button data-v="polyline">Polylines</button>
+      <button data-v="nurbs">NURBS</button>
+      <button data-v="both">Both</button>
+    </div>
+    <label class="row"><input type="checkbox" id="cTubes"> Also export tubes (mesh, diameter = line thickness)</label>
+    <label>Units</label>
+    <div class="seg" id="segUnits">
+      <button data-v="mm">mm</button><button data-v="cm">cm</button><button data-v="m">m</button><button data-v="in">in</button>
+    </div>
+    <label>Origin (0,0,0)</label>
+    <div class="seg" id="segOrigin">
+      <button data-v="tapped">Tapped origin</button>
+      <button data-v="bbox">Bounding-box corner</button>
+      <button data-v="sheet">Sheet centre</button>
+    </div>
+    <p class="hint" id="originHint"></p>
+    <label class="row"><input type="checkbox" id="cOnlySel"> Only selected strokes</label>
+    <label>File name</label>
+    <input id="iName" type="text" value="pencil3d" autocomplete="off">
+    <div class="btns"><button id="bExport" class="primary">Export &amp; share</button></div>
+    <div id="exportOut"></div>
+  </section>
+
+  <section data-panel="files" hidden>
+    <label>Save current drawing</label>
+    <div class="inline"><input id="iSession" type="text" placeholder="Drawing name"><button id="bSave">Save</button></div>
+    <div class="btns"><button id="bNew">New drawing</button></div>
+    <label>Saved drawings</label>
+    <div id="sessionList"></div>
+    <p class="hint">Everything is stored on this phone only.</p>
+  </section>
+
+  <section data-panel="setup" hidden>
+    <label>Tracking</label>
+    <div class="seg" id="segTrack">
+      <button data-v="cube">Marker cube</button>
+      <button data-v="color">Plain pencil (test)</button>
+    </div>
+    <div id="cubeSetup">
+      <label>Desk sheet paper</label>
+      <div class="seg" id="segPaper"><button data-v="a4">A4</button><button data-v="letter">US Letter</button></div>
+      <label>Cube size (edge, as printed) <output id="oCube"></output></label>
+      <input id="iCube" type="range" min="2" max="5" step="0.5">
+      <label>Pencil length below the cube <output id="oPen"></output></label>
+      <input id="iPen" type="range" min="3" max="20" step="0.5">
+      <div class="btns">
+        <button id="bCalib">Calibrate tip</button>
+        <button id="bCalibReset">Reset tip</button>
+      </div>
+      <p class="hint" id="tipHint"></p>
+    </div>
+    <div id="colorSetup" hidden>
+      <p class="hint">Plain-pencil mode follows a coloured tip (put a bright sticker or paint on it).
+        It can't measure depth: it draws on a flat plane at the height below.</p>
+      <div class="btns"><button id="bPick">Pick tip colour (tap the tip)</button></div>
+      <div id="pickedColor" class="hint"></div>
+      <label>Drawing plane height <output id="oPlane"></output></label>
+      <input id="iPlane" type="range" min="0" max="20" step="0.5">
+    </div>
+    <label>Camera field of view <output id="oFov"></output></label>
+    <label class="row"><input type="checkbox" id="cAutoFov"> Estimate automatically from the sheet</label>
+    <input id="iFov" type="range" min="45" max="85" step="0.1">
+    <label>Processing resolution</label>
+    <div class="seg" id="segRes"><button data-v="640">Fast</button><button data-v="960">Balanced</button><button data-v="1280">Precise</button></div>
+    <label class="row"><input type="checkbox" id="cDebug"> Show detected markers</label>
+    <div class="btns"><a class="button" href="print.html" target="_blank">Print markers…</a><button id="bHelp">How to use</button></div>
+    <p class="hint">Pencil3D · runs entirely on this phone · no accounts, no cloud.</p>
+  </section>
+</div>
+
+<!-- start / help overlay -->
+<div id="intro" class="overlay">
+  <div class="card">
+    <h1>Pencil3D</h1>
+    <p>Draw in 3D with a pencil. Lines stay in place over the camera view and export to Rhino.</p>
+    <ol>
+      <li><b>Print</b> the desk sheet and the pencil cube (<a href="print.html" target="_blank">print page</a>) at 100%.</li>
+      <li>Put the sheet on the desk and the phone on a stand looking down at it at an angle.</li>
+      <li>Put the cube on the end of the pencil and <b>calibrate the tip</b> once (Setup).</li>
+      <li><b>Hold the draw button</b> while you move the pencil.</li>
+    </ol>
+    <button id="bStart" class="primary">Start camera</button>
+    <p id="introErr" class="err"></p>
+  </div>
+</div>
+
+<!-- calibration overlay -->
+<div id="calib" class="overlay hidden">
+  <div class="card">
+    <h2>Calibrate tip</h2>
+    <p>Put the pencil tip on the ○ at the centre of the sheet. Keep the tip still and <b>tilt the pencil around it in a circle</b> (about 30°).</p>
+    <div class="meter"><div id="calibBar"></div></div>
+    <p id="calibMsg"></p>
+    <div class="btns"><button id="calibCancel">Cancel</button><button id="calibUse" class="primary" disabled>Use result</button></div>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="vendor/cv.js"></script>
+<script src="vendor/aruco.js"></script>
+<script src="vendor/aruco_mip_16h3.js"></script>
+<script src="js/core/markers.js"></script>
+<script src="js/core/cvmath.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

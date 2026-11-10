@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Pencil3D synthetic tracking test</title></head>
+<body>
+<pre id="out">running…</pre>
+<script src="../vendor/cv.js"></script>
+<script src="../vendor/aruco.js"></script>
+<script src="../vendor/aruco_mip_16h3.js"></script>
+<script src="../js/core/markers.js"></script>
+<script src="../js/core/cvmath.js"></script>
+<script src="../js/core/tracker.js"></script>
+<script type="module">
+import * as THREE from '../vendor/three.module.js';
+const P3D = self.P3D, M = P3D.M;
+const W = 1280, H = 720;
+const params = new URLSearchParams(location.search);
+const PAPER = 'a4', CUBE = Number(params.get('cube') || 3), PEN_L = 14;
+const PX_PER_CM = 60;
+
+function markerCanvas(id, fill) { // white square with marker centered, marker occupies `fill` of width
+  const N = 512, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, N, N);
+  const m = N * fill, x0 = (N - m) / 2, cell = m / 6;
+  g.fillStyle = '#000'; g.fillRect(x0, x0, m, m);
+  const bits = P3D.markerBits(id); g.fillStyle = '#fff';
+  for (let r = 0; r < 4; r++) for (let q = 0; q < 4; q++) if (bits[r][q]) g.fillRect(x0 + (q + 1) * cell, x0 + (r + 1) * cell, cell + 0.5, cell + 0.5);
+  return c;
+}
+function boardCanvas() {
+  const B = P3D.boardLayout(PAPER);
+  const c = document.createElement('canvas'); c.width = Math.round(B.W * PX_PER_CM); c.height = Math.round(B.H * PX_PER_CM);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  for (const mk of B.markers) {
+    const s = mk.sheet.size * PX_PER_CM, x = mk.sheet.x * PX_PER_CM, y = mk.sheet.y * PX_PER_CM, cell = s / 6;
+    g.fillStyle = '#000'; g.fillRect(x, y, s, s); g.fillStyle = '#fff';
+    const bits = P3D.markerBits(mk.id);
+    for (let r = 0; r < 4; r++) for (let q = 0; q < 4; q++) if (bits[r][q]) g.fillRect(x + (q + 1) * cell, y + (r + 1) * cell, cell + 0.5, cell + 0.5);
+  }
+  return { c, B };
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H); renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x777766);
+const { c: bc, B } = boardCanvas();
+const btex = new THREE.CanvasTexture(bc); btex.anisotropy = 8;
+const boardMesh = new THREE.Mesh(new THREE.PlaneGeometry(B.W, B.H), new THREE.MeshBasicMaterial({ map: btex }));
+scene.add(boardMesh);
+
+// pen cube
+const cube = P3D.cubeLayout(CUBE);
+const pen = new THREE.Group(); scene.add(pen);
+for (const mk of cube.markers) {
+  const c = mk.corners, ctr = [0, 1, 2].map(j => (c[0][j] + c[2][j]) / 2);
+  const k = CUBE / cube.markerSize;
+  const V = c.map(p => [0, 1, 2].map(j => ctr[j] + (p[j] - ctr[j]) * k));
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([...V[0], ...V[1], ...V[2], ...V[3]], 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 0], 2));
+  geo.setIndex([0, 3, 2, 0, 2, 1]);
+  const tex = new THREE.CanvasTexture(markerCanvas(mk.id, cube.markerSize / CUBE));
+  pen.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide })));
+}
+const pencil = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.05, PEN_L, 12), new THREE.MeshBasicMaterial({ color: 0xd9a400 }));
+pencil.rotation.x = Math.PI / 2; pencil.position.z = -CUBE / 2 - PEN_L / 2; pen.add(pencil);
+const tipLocal = [0, 0, -(CUBE / 2 + PEN_L)];
+
+const tracker = new P3D.Tracker({ paper: PAPER, cubeSize: CUBE, refine: params.get('refine') !== '0' });
+const K = tracker.intrinsics(W, H);
+const cam = new THREE.PerspectiveCamera(); cam.matrixAutoUpdate = false;
+function setProjection() {
+  const n = 0.5, f = 500;
+  const cxg = K.cx + 0.5, cyg = K.cy + 0.5; // GL pixel centres sit at +0.5
+  const l = -cxg / K.f * n, r = (W - cxg) / K.f * n, t = cyg / K.f * n, b = -(H - cyg) / K.f * n;
+  cam.projectionMatrix.makePerspective(l, r, t, b, n, f);
+  cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+}
+setProjection();
+function lookAtCV(eye, target, up = [0, 0, 1]) { // returns world->cam (OpenCV) R,t
+  const z = M.normalize(M.sub(target, eye));
+  const x = M.normalize(M.cross(z, up));
+  const y = M.cross(z, x);
+  const R = [...x, ...y, ...z];
+  return { R, t: M.scale(M.mulMV(R, eye), -1) };
+}
+function setCamFromCV(R, t) {
+  const Rt = M.transpose(R), C = M.scale(M.mulMV(Rt, t), -1);
+  // three camera axes: x = cv x, y = -cv y, z = -cv z
+  const m = new THREE.Matrix4().set(
+    Rt[0], -Rt[1], -Rt[2], C[0],
+    Rt[3], -Rt[4], -Rt[5], C[1],
+    Rt[6], -Rt[7], -Rt[8], C[2], 0, 0, 0, 1);
+  cam.matrix.copy(m); cam.matrixWorld.copy(m); cam.matrixWorldInverse.copy(m).invert();
+}
+const read = document.createElement('canvas'); read.width = W; read.height = H;
+const rg = read.getContext('2d', { willReadFrequently: true });
+
+function rng(seed) { let s = seed; return () => ((s = (s * 16807) % 2147483647) / 2147483647); }
+const rand = rng(42);
+const results = [];
+const NOISE = Number(params.get('noise') || 3);
+for (let trial = 0; trial < Number(params.get('n') || 40); trial++) {
+  const eye = [(rand() - 0.5) * 20, -30 - rand() * 15, 30 + rand() * 20];
+  const { R: Rc, t: tc } = lookAtCV(eye, [(rand() - 0.5) * 6, (rand() - 0.5) * 4, 0]);
+  setCamFromCV(Rc, tc);
+  // pen pose in world: tip somewhere above the board, pencil tilted
+  const tipW = [(rand() - 0.5) * 14, (rand() - 0.5) * 8, rand() * 8];
+  const axis = M.normalize([(rand() - 0.5) * 0.9, -0.4 - rand() * 0.5, 1]); // cube +Z direction (towards eraser), leaning to camera
+  let Rp = M.rotBetween([0, 0, 1], axis);
+  Rp = M.mulMM(Rp, M.rodrigues([0, 0, rand() * Math.PI * 2]));
+  const tp = M.sub(tipW, M.mulMV(Rp, tipLocal));
+  pen.matrixAutoUpdate = false;
+  pen.matrix.set(Rp[0], Rp[1], Rp[2], tp[0], Rp[3], Rp[4], Rp[5], tp[1], Rp[6], Rp[7], Rp[8], tp[2], 0, 0, 0, 1);
+  pen.matrixWorldNeedsUpdate = true;
+  renderer.render(scene, cam);
+  rg.drawImage(renderer.domElement, 0, 0);
+  const im = rg.getImageData(0, 0, W, H);
+  if (NOISE) for (let i = 0; i < im.data.length; i += 4) { const nn = (rand() - 0.5) * 2 * NOISE; im.data[i] += nn; im.data[i + 1] += nn; im.data[i + 2] += nn; }
+  const res = tracker.process(im);
+  const r = { trial, ms: +res.ms.toFixed(1), markers: res.markers.length };
+  if (res.board) {
+    r.boardT = +M.norm(M.sub(res.board.t, tc)).toFixed(3);
+    r.boardRdeg = +(M.rotAngle(res.board.R, Rc) * 180 / Math.PI).toFixed(3);
+    r.boardRms = +res.board.rms.toFixed(2);
+  }
+  if (res.board && res.pen) {
+    const tipCam = M.add(M.mulMV(res.pen.R, tipLocal), res.pen.t);
+    const tipEst = M.mulMtV(res.board.R, M.sub(tipCam, res.board.t));
+    r.tipErr = +M.norm(M.sub(tipEst, tipW)).toFixed(3);
+    r.faces = res.pen.faces; r.penRms = +res.pen.rms.toFixed(2);
+    // ground truth cube pose in camera
+    const RpC = M.mulMM(Rc, Rp);
+    r.penRdeg = +(M.rotAngle(res.pen.R, RpC) * 180 / Math.PI).toFixed(2);
+  }
+  { // corner accuracy vs ground truth
+    const RpC = M.mulMM(Rc, Rp), tpC = M.add(M.mulMV(Rc, tp), tc);
+    let eb = [], ec = [];
+    for (const mk of res.markers) {
+      const bm = B.byId[mk.id], cm = cube.byId[mk.id];
+      for (let k = 0; k < 4; k++) {
+        const gt = bm ? M.project(Rc, tc, bm.corners[k], K) : M.project(RpC, tpC, cm.corners[k], K);
+        (bm ? eb : ec).push(Math.hypot(gt[0] - mk.c[k][0], gt[1] - mk.c[k][1]));
+      }
+    }
+    r.cornB = +(eb.reduce((a, b) => a + b, 0) / (eb.length || 1)).toFixed(2);
+    r.cornC = +(ec.reduce((a, b) => a + b, 0) / (ec.length || 1)).toFixed(2);
+  }
+  results.push(r);
+}
+const tip = results.filter(r => r.tipErr != null).map(r => r.tipErr).sort((a, b) => a - b);
+const med = a => a.slice().sort((x, y) => x - y)[a.length >> 1];
+const summary = {
+  trials: results.length,
+  boardFound: results.filter(r => r.boardT != null).length,
+  penFound: tip.length,
+  tipMedianCm: tip[tip.length >> 1], tipP90Cm: tip[Math.floor(tip.length * 0.9)], tipMaxCm: tip[tip.length - 1],
+  cornB: med(results.map(r => r.cornB)), cornC: med(results.map(r => r.cornC)),
+  msMedian: results.map(r => r.ms).sort((a, b) => a - b)[results.length >> 1],
+};
+document.getElementById('out').textContent = JSON.stringify({ summary, results }, null, 1);
+window.__done = { summary, results };
+</script>
+</body>
+</html>

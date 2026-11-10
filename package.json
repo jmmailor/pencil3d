@@ -1,0 +1,16 @@
+{
+  "name": "pencil3d",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Draw 3D lines with a pencil using a phone camera; export to Rhino/OBJ/DXF/FBX.",
+  "scripts": {
+    "serve": "python3 -m http.server 8123"
+  },
+  "devDependencies": {
+    "js-aruco2": "^2.0.0",
+    "rhino3dm": "^8.35.0",
+    "three": "^0.187.0"
+  },
+  "comment": "Libraries are vendored in /vendor (three, rhino3dm, js-aruco2); npm is only used to update them."
+}

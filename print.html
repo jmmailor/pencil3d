@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pencil3D – print markers</title>
+<style>
+  body { font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; margin: 0; color: #111; background: #f2f2f7; }
+  .ui { max-width: 720px; margin: 0 auto; padding: 18px; }
+  h1 { margin: 0 0 6px; font-size: 22px; }
+  fieldset { border: 0; padding: 0; margin: 12px 0; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  select, button { font: inherit; padding: 8px 12px; border-radius: 9px; border: 1px solid #ccc; background: #fff; }
+  button.primary { background: #0a84ff; color: #fff; border: 0; }
+  .page { background: #fff; margin: 14px auto; box-shadow: 0 2px 10px rgba(0,0,0,.12); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .page svg { display: block; }
+  ol li { margin: 4px 0; }
+  .preview .page svg { width: 100%; height: auto; }
+  @media print {
+    .ui { display: none; }
+    body { background: #fff; }
+    .page { margin: 0; box-shadow: none; break-after: page; page-break-after: always; }
+    .preview .page svg { width: auto; height: auto; }
+  }
+</style>
+<style id="pageStyle"></style>
+</head>
+<body>
+<div class="ui">
+  <h1>Print markers</h1>
+  <p>Print both pages at <b>100% / actual size</b> (turn off "fit to page"). Then measure the black squares with a ruler: the sheet's must be exactly <b>3.0 cm</b>.</p>
+  <fieldset>
+    <label>Paper <select id="paper"><option value="a4">A4</option><option value="letter">US Letter</option></select></label>
+    <label>Cube <select id="cube"><option>2.5</option><option selected>3</option><option>3.5</option><option>4</option><option>5</option></select> cm</label>
+    <button class="primary" onclick="print()">Print</button>
+    <button id="dlBoard">Download sheet (SVG)</button>
+    <button id="dlCube">Download cube (SVG)</button>
+  </fieldset>
+  <ol>
+    <li>Lay the desk sheet flat (tape it down). The text edge faces you.</li>
+    <li>For a sturdier cube, glue the print onto thin card first. Cut it out, fold along the dashed lines with the <b>print outside</b>, and glue the tabs.</li>
+    <li>Push the pencil's eraser end into the hole in the bottom so the pencil sits straight under the cube's centre. Then measure the pencil length from the cube's bottom face to the tip.</li>
+    <li>In the app: Setup → set the same paper, cube size and pencil length, then <b>Calibrate tip</b>.</li>
+  </ol>
+  <p>A bigger cube or a shorter pencil gives better accuracy. Matte paper avoids reflections.</p>
+</div>
+<div class="preview" id="pages"></div>
+
+<script src="vendor/cv.js"></script>
+<script src="vendor/aruco.js"></script>
+<script src="vendor/aruco_mip_16h3.js"></script>
+<script src="js/core/markers.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  try { const s = JSON.parse(localStorage.getItem('p3d.settings') || '{}'); if (s.paper) $('paper').value = s.paper; if (s.cubeSize) $('cube').value = String(s.cubeSize); } catch {}
+  function render() {
+    const paper = $('paper').value, cube = parseFloat($('cube').value);
+    const P = P3D.PAPERS[paper];
+    $('pageStyle').textContent = `@page { size: ${paper === 'a4' ? 'A4' : 'letter'} landscape; margin: 0; }
+      @media print { .page { width: ${P.w}cm; height: ${P.h}cm; } }`;
+    const pages = $('pages');
+    pages.innerHTML = '';
+    const p1 = document.createElement('div'); p1.className = 'page'; p1.style.maxWidth = '1000px';
+    p1.innerHTML = P3D.boardSVG(paper);
+    const p2 = document.createElement('div'); p2.className = 'page'; p2.style.maxWidth = '1000px';
+    p2.innerHTML = P3D.cubeSVG(cube);
+    pages.append(p1, p2);
+  }
+  function download(name, svg) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    a.download = name; a.click();
+  }
+  $('paper').onchange = render; $('cube').onchange = render;
+  $('dlBoard').onclick = () => download(`pencil3d-sheet-${$('paper').value}.svg`, P3D.boardSVG($('paper').value));
+  $('dlCube').onclick = () => download(`pencil3d-cube-${$('cube').value}cm.svg`, P3D.cubeSVG(parseFloat($('cube').value)));
+  render();
+</script>
+</body>
+</html>
